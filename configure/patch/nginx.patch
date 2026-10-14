@@ -1,0 +1,178 @@
+diff -urNp src/nginx-1.14.2/auto/feature src-2/nginx-1.24.0/auto/feature
+--- src/nginx-1.14.2/auto/feature	2018-12-04 14:52:24.000000000 +0000
++++ src-2/nginx-1.24.0/auto/feature	2026-10-13 06:29:30.793805289 +0000
+@@ -64,6 +64,16 @@ if [ -x $NGX_AUTOTEST ]; then
+             else
+                 echo " found but is not working"
+             fi
++
++            # cross-compilation: if the binary was built but can't run,
++            # treat it as found anyway
++            if [ $ngx_found = no ]; then
++                echo " (assuming found for cross-compilation)"
++                ngx_found=yes
++                if test -n "$ngx_feature_name"; then
++                    have=$ngx_have_feature . auto/have
++                fi
++            fi
+         ;;
+ 
+         value)
+@@ -82,6 +92,12 @@ END
+             else
+                 echo " found but is not working"
+             fi
++
++            # cross-compilation: if the binary was built but can't run,
++            # skip the value check (can't get the value)
++            if [ $ngx_found = no ]; then
++                echo " (assuming not supported for cross-compilation)"
++            fi
+         ;;
+ 
+         bug)
+@@ -97,6 +113,12 @@ END
+                     have=$ngx_have_feature . auto/have
+                 fi
+             fi
++
++            # cross-compilation: if the binary was built but can't run,
++            # conservatively assume the bug is not present
++            if [ $ngx_found = no ]; then
++                echo " (assuming not found for cross-compilation)"
++            fi
+         ;;
+ 
+         *)
+@@ -120,4 +142,4 @@ else
+     echo "----------"    >> $NGX_AUTOCONF_ERR
+ fi
+ 
+-rm -rf $NGX_AUTOTEST*
++rm -rf $NGX_AUTOTEST*
+\ No newline at end of file
+diff -urNp src/nginx-1.14.2/auto/types/sizeof src-2/nginx-1.24.0/auto/types/sizeof
+--- src/nginx-1.14.2/auto/types/sizeof	2018-12-04 14:52:24.000000000 +0000
++++ src-2/nginx-1.24.0/auto/types/sizeof	2026-10-13 06:37:37.841404086 +0000
+@@ -1,4 +1,3 @@
+-
+ # Copyright (C) Igor Sysoev
+ # Copyright (C) Nginx, Inc.
+ 
+@@ -40,7 +39,46 @@ eval "$ngx_test >> $NGX_AUTOCONF_ERR 2>&
+ 
+ 
+ if [ -x $NGX_AUTOTEST ]; then
+-    ngx_size=`$NGX_AUTOTEST`
++    ngx_size=`$NGX_AUTOTEST 2>/dev/null`
++
++    if [ -z "$ngx_size" ]; then
++        echo $ngx_n " (cross-compiling, using compile-time detection)$ngx_c"
++
++        case "$ngx_type" in
++            "void *") ngx_type_normalized="POINTER" ;;
++            *)        ngx_type_normalized=`echo "$ngx_type" | tr ' *' '_P'` ;;
++        esac
++        ngx_size=`echo "__SIZEOF_${ngx_type_normalized}__" \
++                  | $CC -E -P -x c - 2>/dev/null | tail -1 | tr -d ' '`
++
++        if [ -z "$ngx_size" ] \
++           || [ "$ngx_size" = "__SIZEOF_${ngx_type_normalized}__" ]
++        then
++            ngx_size=
++            for ngx_try in 1 2 4 8 16; do
++                cat > $NGX_AUTOTEST.c << END
++#include <sys/types.h>
++#include <sys/time.h>
++$NGX_INCLUDE_UNISTD_H
++#include <signal.h>
++#include <stdlib.h>
++#include <stdio.h>
++#include <sys/resource.h>
++$NGX_INCLUDE_INTTYPES_H
++$NGX_INCLUDE_AUTO_CONFIG_H
++int main(void) {
++    char a[($ngx_try == sizeof($ngx_type)) ? 1 : -1];
++    return 0;
++}
++END
++                if $CC $CC_TEST_FLAGS -c -o /dev/null $NGX_AUTOTEST.c 2>/dev/null; then
++                    ngx_size=$ngx_try
++                    break
++                fi
++            done
++        fi
++    fi
++
+     echo " $ngx_size bytes"
+ fi
+ 
+@@ -72,5 +110,4 @@ case $ngx_size in
+ esac
+ 
+ 
+-rm -rf $NGX_AUTOTEST*
+-
++rm -rf $NGX_AUTOTEST*
+\ No newline at end of file
+diff -urNp src/nginx-1.14.2/auto/unix src-2/nginx-1.24.0/auto/unix
+--- src/nginx-1.14.2/auto/unix	2018-12-04 14:52:24.000000000 +0000
++++ src-2/nginx-1.24.0/auto/unix	2026-10-13 06:40:47.076614679 +0000
+@@ -780,6 +780,12 @@ if [ $ngx_found = no ]; then
+     . auto/feature
+ fi
+ 
++if [ $ngx_found = no ]; then
++
++    # musl libc or cross-compilation: provide a safe default
++    have=NGX_SYS_NERR value=256 . auto/define
++fi
++
+ 
+ ngx_feature="localtime_r()"
+ ngx_feature_name="NGX_HAVE_LOCALTIME_R"
+@@ -1024,4 +1030,4 @@ ngx_feature_libs=
+ ngx_feature_test='struct addrinfo *res;
+                   if (getaddrinfo("localhost", NULL, NULL, &res) != 0) return 1;
+                   freeaddrinfo(res)'
+-. auto/feature
++. auto/feature
+\ No newline at end of file
+diff -urNp src/nginx-1.14.2/nginx.sh src-2/nginx-1.24.0/nginx.sh
+--- src/nginx-1.14.2/nginx.sh	1970-01-01 00:00:00.000000000 +0000
++++ src-2/nginx-1.24.0/nginx.sh	2026-10-13 06:46:25.449011633 +0000
+@@ -0,0 +1,33 @@
++./configure \
++--prefix=$(pwd)/../install/nginx \
++--sbin-path=/usr/sbin/nginx \
++--conf-path=/etc/nginx/nginx.conf \
++--error-log-path=/var/log/nginx/error.log \
++--http-log-path=/var/log/nginx/access.log \
++--pid-path=/var/run/nginx.pid \
++--lock-path=/var/run/nginx.lock \
++--with-cc=${CC} \
++--with-cpp=${CXX} \
++--with-cc-opt="-I$(pwd)/../install/include -O2" \
++--with-ld-opt="-L$(pwd)/../install/lib -static" \
++--with-http_ssl_module \
++--with-stream \
++--with-stream_ssl_module \
++--without-http_gzip_module \
++--without-http_autoindex_module \
++--without-http_ssi_module \
++--without-http_userid_module \
++--without-http_geo_module \
++--without-http_map_module \
++--without-http_split_clients_module \
++--without-http_referer_module \
++--without-http_fastcgi_module \
++--without-http_uwsgi_module \
++--without-http_scgi_module \
++--without-http_memcached_module \
++--without-http_limit_conn_module \
++--without-http_limit_req_module \
++--without-http_empty_gif_module \
++--without-http_browser_module \
++--without-poll_module \
++--without-select_module
+\ No newline at end of file
