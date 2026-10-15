@@ -7,9 +7,9 @@
 # TOKEN_ID=1234567890abcdef1234567890abcdef
 # SCRIPT_ROOT=$(dirname $0)
 
+. /etc/info.sh
 
-export SCRIPT_ROOT=$(dirname $0)
-. ${SCRIPT_ROOT}/info.sh
+. ${SCRIPT_ROOT}/ipv6.sh 
 . ${SCRIPT_ROOT}/frpc.sh &
 . ${SCRIPT_ROOT}/ddns.sh &
 . ${SCRIPT_ROOT}/nginx.sh &

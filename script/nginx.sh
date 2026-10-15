@@ -7,6 +7,7 @@
 # TOKEN_ID=1234567890abcdef1234567890abcdef
 # SCRIPT_ROOT=$(dirname $0)
 
+. /etc/info.sh
 
 mkdir -p /var/log/nginx
 cp -rf ${SCRIPT_ROOT}/nginx /tmp/nginx

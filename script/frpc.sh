@@ -7,6 +7,8 @@
 # TOKEN_ID=1234567890abcdef1234567890abcdef
 # SCRIPT_ROOT=$(dirname $0)
 
+. /etc/info.sh
+
 
 FRP_ROOT=/tmp/frp
 LOG_FILE=/tmp/frp/frpc.log 
