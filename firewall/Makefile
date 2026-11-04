@@ -1,5 +1,8 @@
 CC      ?= gcc
+LD      ?= ld
+STRIP   ?= strip
 CFLAGS  ?= -Wall -Wextra -O2
+LDFLAGS ?= -static
 TARGET  := firewall
 OBJS    := fw_html.o
 
@@ -8,10 +11,11 @@ OBJS    := fw_html.o
 all: $(TARGET)
 
 $(TARGET): main.c $(OBJS)
-	$(CC) $(CFLAGS) -o $@ main.c $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ main.c $(OBJS)
+	$(STRIP) $@
 
 fw_html.o: fw.html
-	ld -r -b binary fw.html -o $@
+	$(LD) -r -b binary fw.html -o $@
 
 clean:
 	rm -f $(TARGET) $(OBJS)

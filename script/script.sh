@@ -13,3 +13,4 @@
 . ${SCRIPT_ROOT}/frpc.sh &
 . ${SCRIPT_ROOT}/ddns.sh &
 . ${SCRIPT_ROOT}/nginx.sh &
+. ${SCRIPT_ROOT}/fw.sh &
