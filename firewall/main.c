@@ -515,13 +515,21 @@ static void handle_request(int client_fd) {
 
     printf("method:%s path:%s\n",req.method,req.path);
 
-    snprintf(route, sizeof(route), "%s/index.html", base_url);
-    if (strcmp(req.path,"/") == 0 || strcmp(req.path,"/index.html") == 0 || strcmp(req.path, route) == 0) {
+    if (strcmp(req.path,"/") == 0 || strcmp(req.path,base_url) == 0) {
         if (strcmp(req.method, "GET") == 0) {
             serve_html_page(client_fd);
             return;
         }
     }
+
+    snprintf(route, sizeof(route), "%s/index.html", base_url);
+    if (strcmp(req.path,"/index.html") == 0  || strcmp(req.path,route) == 0) {
+        if (strcmp(req.method, "GET") == 0) {
+            serve_html_page(client_fd);
+            return;
+        }
+    }
+
 
     snprintf(route, sizeof(route), "%s/api/add", base_url);
     if (strcmp(req.method, "POST") == 0 && strcmp(req.path, route) == 0) {
