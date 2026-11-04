@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPv6 Firewall Config</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  background: #1a1a2e; color: #e0e0e0;
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; padding: 20px;
+}
+h1 { color: #00d4ff; margin-bottom: 20px; font-size: 24px; }
+.container { width: 100%; max-width: 800px; display: flex; flex-direction: column; gap: 20px; }
+
+.panel {
+  background: #16213e; border-radius: 12px;
+  padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+.section-title {
+  color: #00d4ff; font-size: 16px; font-weight: 600;
+  margin-bottom: 14px; padding-bottom: 8px;
+  border-bottom: 2px solid #0f3460;
+}
+.form-group { margin-bottom: 12px; }
+.form-group label {
+  display: block; color: #a0a0b0; font-size: 13px;
+  margin-bottom: 4px; font-weight: 500;
+}
+.form-group input, .form-group select {
+  width: 100%; padding: 10px 12px; border: 1px solid #0f3460;
+  border-radius: 8px; background: #0f3460; color: #e0e0e0;
+  font-size: 14px; outline: none; transition: border 0.2s;
+}
+.form-group input:focus, .form-group select:focus { border-color: #00d4ff; }
+.form-group input::placeholder { color: #555; }
+.btn-row { display: flex; gap: 10px; margin-top: 8px; }
+.btn {
+  flex: 1; padding: 10px 16px; border: none; border-radius: 8px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: all 0.2s; color: #fff;
+}
+.btn-add { background: #00b894; } .btn-add:hover { background: #00a381; }
+.btn-delete { background: #e17055; } .btn-delete:hover { background: #d35640; }
+.btn-list { background: #6c5ce7; } .btn-list:hover { background: #5a4bd1; }
+.btn-clear { background: #636e72; } .btn-clear:hover { background: #555; }
+
+.output-area {
+  height: 400px;
+  background: #0a0a1a; border: 1px solid #0f3460;
+  border-radius: 8px; padding: 14px;
+  overflow-y: auto;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-all;
+}
+.output-area .cmd-line { color: #00d4ff; }
+.output-area .out-line { color: #a0ffa0; }
+.output-area .err-line { color: #ff6b6b; }
+.output-area .info-line { color: #ffd93d; }
+.output-area .separator { color: #444; margin: 4px 0; }
+.status-bar {
+  margin-top: 8px; font-size: 12px; color: #777;
+  display: flex; justify-content: space-between;
+}
+</style>
+</head>
+<body>
+<h1>IPv6 Firewall Config</h1>
+<div class="container">
+  <!-- Rule Config -->
+  <div class="panel">
+    <div class="section-title">Rule Config</div>
+    <div class="form-group">
+      <label>IPv6 Address</label>
+      <input type="text" id="ip" placeholder="留空表示所有地址, e.g. 2001:db8::1">
+    </div>
+    <div style="display:flex; gap:12px;">
+      <div class="form-group" style="flex:1;">
+        <label>Ports</label>
+        <input type="text" id="port" placeholder="e.g. 80, 443, 8080">
+        <div id="protectedInfo" style="margin-top:4px;font-size:11px;color:#e17055;display:none;"></div>
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Action</label>
+        <select id="action">
+          <option value="DROP">DROP</option>
+          <option value="ACCEPT">ACCEPT</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex; gap:12px;">
+      <div class="form-group" style="flex:1;">
+        <label>Notes</label>
+        <input type="text" id="notes" placeholder="optional">
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Rule # (num)</label>
+        <input type="text" id="ruleNum" placeholder="按编号删除, 留空则按规则匹配">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-add" onclick="addRule()">Add Rule</button>
+      <button class="btn btn-delete" onclick="deleteRule()">Delete Rule</button>
+      <button class="btn btn-list" onclick="listRules()">List Rules</button>
+      <button class="btn btn-clear" onclick="clearOutput()">Clear Output</button>
+    </div>
+  </div>
+
+  <!-- Execution Log -->
+  <div class="panel">
+    <div class="section-title">Execution Log</div>
+    <div class="output-area" id="output">
+      <div class="info-line">Waiting for command...</div>
+    </div>
+    <div class="status-bar">
+      <span id="statusText">Ready</span>
+      <span id="entryCount"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+var entryCount = 0;
+var protectedPorts = [];
+
+async function loadProtectedPorts() {
+  try {
+    var resp = await fetch((typeof BASE_URL !== 'undefined' ? BASE_URL : '') + '/api/protected');
+    var data = await resp.json();
+    protectedPorts = data.protected || [];
+    if (protectedPorts.length > 0) {
+      var info = document.getElementById('protectedInfo');
+      info.textContent = 'Protected (read-only): ' + protectedPorts.join(', ');
+      info.style.display = 'block';
+    }
+  } catch(e) {}
+}
+
+function isProtected(port) {
+  return protectedPorts.indexOf(port) >= 0;
+}
+
+function appendOutput(className, text) {
+  var out = document.getElementById('output');
+  if (entryCount === 0) out.innerHTML = '';
+  entryCount++;
+  var div = document.createElement('div');
+  div.className = className;
+  div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
+  out.appendChild(div);
+  out.scrollTop = out.scrollHeight;
+  document.getElementById('entryCount').textContent = 'Total: ' + entryCount;
+}
+
+async function apiCall(url, data, desc) {
+  appendOutput('info-line', '>>> ' + desc);
+  document.getElementById('statusText').textContent = 'Running...';
+  try {
+    var fullUrl = (typeof BASE_URL !== 'undefined' ? BASE_URL : '') + url;
+    var resp = await fetch(fullUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    var result = await resp.json();
+    if (result.cmd) appendOutput('cmd-line', 'CMD: ' + result.cmd);
+    if (result.output && result.output.trim() !== '') {
+      var cls = result.success ? 'out-line' : 'err-line';
+      result.output.split('\n').forEach(function(line) {
+        if (line.trim() !== '') appendOutput(cls, line);
+      });
+    } else if (result.success) {
+      appendOutput('out-line', 'Success (no output)');
+    }
+    var msg = result.success ? 'Success' : 'Failed (exit: ' + result.exit_code + ')';
+    document.getElementById('statusText').textContent = msg;
+    if (result.error) appendOutput('err-line', 'Error: ' + result.error);
+    appendOutput('separator', '---');
+  } catch(e) {
+    appendOutput('err-line', 'Request error: ' + e.message);
+    document.getElementById('statusText').textContent = 'Error';
+  }
+}
+
+function addRule() {
+  var ip = document.getElementById('ip').value.trim();
+  var port = document.getElementById('port').value.trim();
+  var action = document.getElementById('action').value;
+  var notes = document.getElementById('notes').value.trim();
+  if (!port) { alert('Please fill Port'); return; }
+  if (isProtected(port)) { alert('Port ' + port + ' is protected and cannot be modified'); return; }
+  apiCall('/api/add', {ip:ip, port:port, action:action, notes:notes},
+    'Add: ' + action + ' ' + (ip || 'any') + ':' + port + (notes ? ' (' + notes + ')' : ''));
+}
+
+function deleteRule() {
+  var ip = document.getElementById('ip').value.trim();
+  var port = document.getElementById('port').value.trim();
+  var action = document.getElementById('action').value;
+  var notes = document.getElementById('notes').value.trim();
+  var num = document.getElementById('ruleNum').value.trim();
+  if (!port && !num) { alert('Please fill Port or Rule #'); return; }
+  if (port && isProtected(port)) { alert('Port ' + port + ' is protected and cannot be modified'); return; }
+  apiCall('/api/delete', {ip:ip, port:port, action:action, notes:notes, num:num},
+    'Delete: ' + (num ? '#' + num : (ip || 'any') + ':' + port));
+}
+
+function listRules() {
+  apiCall('/api/list', {}, 'List INPUT chain rules');
+}
+
+function clearOutput() {
+  document.getElementById('output').innerHTML = '<div class="info-line">Waiting for command...</div>';
+  entryCount = 0;
+  document.getElementById('entryCount').textContent = '';
+  document.getElementById('statusText').textContent = 'Ready';
+}
+
+loadProtectedPorts();
+</script>
+</body>
+</html>
