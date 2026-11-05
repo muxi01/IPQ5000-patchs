@@ -9,7 +9,6 @@
 
 . /etc/info.sh
 
-. ${SCRIPT_ROOT}/ipv6.sh 
 . ${SCRIPT_ROOT}/frpc.sh &
 . ${SCRIPT_ROOT}/ddns.sh &
 . ${SCRIPT_ROOT}/nginx.sh &

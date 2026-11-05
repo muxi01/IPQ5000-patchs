@@ -9,5 +9,7 @@
 
 . /etc/info.sh
 
-chmod +x ${FW_ROOT}/firewall
-start-stop-daemon -S -b  -p /tmp/firewall.pid -x ${FW_ROOT}/firewall
+chmod +x ${SCRIPT_ROOT}/fw/firewall
+start-stop-daemon -S -b  -p /tmp/firewall.pid -x ${SCRIT_ROOT}/fw/firewall -- -c ${SCRIPT_TOOL}/fw/fw.cfg
+
+

@@ -12,22 +12,27 @@
 
 #define PORT                8080
 #define MAX_PROTECTED_PORTS 64
-#define BUFFER_SIZE         8192
+#define MAX_ACCEPT_PORTS    64
+#define BUFFER_SIZE         4096
 #define MAX_CMD_LEN         2048
-#define MAX_OUTPUT_LEN      8192
-#define MAX_PATH_LEN        256
-#define MAX_HEADERS         64
+#define MAX_OUTPUT_LEN      4096
+#define MAX_PATH_LEN        128
+#define MAX_HEADERS         16
+#define CONFIG_LINE_LEN     512
 
 static char  protected_ports[MAX_PROTECTED_PORTS][8];
 static int   protected_count = 0;
+static char  accept_ports[MAX_ACCEPT_PORTS][8];
+static int   accept_count = 0;
 static char  base_url[MAX_PATH_LEN] = "";
+static char  config_path[MAX_PATH_LEN] = "";
 
 __attribute__((weak)) extern char _binary_fw_html_start;
 __attribute__((weak)) extern char _binary_fw_html_end;
 
 typedef struct {
-    char name[128];
-    char value[4096];
+    char name[64];
+    char value[1024];
 } HttpHeader;
 
 typedef struct {
@@ -55,6 +60,134 @@ static int is_port_protected(const char *port) {
             return 1;
         }
     }
+    return 0;
+}
+
+static int is_port_accept(const char *port) {
+    for (int i = 0; i < accept_count; i++) {
+        if (strcmp(accept_ports[i], port) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void add_accept_port(const char *port) {
+    if (accept_count >= MAX_ACCEPT_PORTS) {
+        return;
+    }
+    int len = (int)strlen(port);
+    if (len <= 0 || len > 7) {
+        return;
+    }
+    strncpy(accept_ports[accept_count], port, 7);
+    accept_ports[accept_count][7] = '\0';
+    accept_count++;
+}
+
+static void add_protected_port(const char *port) {
+    if (protected_count >= MAX_PROTECTED_PORTS) {
+        return;
+    }
+    int len = (int)strlen(port);
+    if (len <= 0 || len > 7) {
+        return;
+    }
+    strncpy(protected_ports[protected_count], port, 7);
+    protected_ports[protected_count][7] = '\0';
+    protected_count++;
+}
+
+static void parse_ports_list(char *list, char ports_array[][8], int *count, int max_count) {
+    char *token = strtok(list, ",");
+    while (token && *count < max_count) {
+        while (*token == ' ') {
+            token++;
+        }
+        int len = (int)strlen(token);
+        while (len > 0 && token[len - 1] == ' ') {
+            token[--len] = '\0';
+        }
+        if (len > 0 && len <= 7) {
+            strncpy(ports_array[*count], token, 7);
+            ports_array[*count][7] = '\0';
+            (*count)++;
+        }
+        token = strtok(NULL, ",");
+    }
+}
+
+static char* trim_line(char *line) {
+    while (*line == ' ' || *line == '\t') {
+        line++;
+    }
+    int len = (int)strlen(line);
+    while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\t' || line[len - 1] == '\r' || line[len - 1] == '\n')) {
+        line[--len] = '\0';
+    }
+    return line;
+}
+
+
+// # IPv6 Firewall Configuration
+// port 8080
+// base_url /firewall
+// protected_ports 22,80,443
+// accept_ports 53,123
+
+static int load_config_file(const char *path, int *out_port, char *out_base_url) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        fprintf(stderr, "Warning: Cannot open config file '%s': %s\n",
+                path, strerror(errno));
+        return -1;
+    }
+
+    char line[CONFIG_LINE_LEN];
+    int line_num = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        char *trimmed = trim_line(line);
+
+        if (trimmed[0] == '#' || trimmed[0] == '\0') {
+            continue;
+        }
+
+        char key[128] = {0};
+        char value[CONFIG_LINE_LEN] = {0};
+        if (sscanf(trimmed, "%127s %511[^\n]", key, value) < 2) {
+            fprintf(stderr, "Warning: config line %d parse error: %s\n", line_num, trimmed);
+            continue;
+        }
+
+        if (strcmp(key, "port") == 0) {
+            int p = atoi(value);
+            if (p > 0 && p <= 65535) {
+                *out_port = p;
+            }
+        } 
+        else if (strcmp(key, "base_url") == 0) {
+            strncpy(out_base_url, value, MAX_PATH_LEN - 1);
+            out_base_url[MAX_PATH_LEN - 1] = '\0';
+            int blen = (int)strlen(out_base_url);
+            while (blen > 0 && out_base_url[blen - 1] == '/') {
+                out_base_url[--blen] = '\0';
+            }
+        } 
+        else if (strcmp(key, "protected_ports") == 0) {
+            parse_ports_list(value, protected_ports, &protected_count, MAX_PROTECTED_PORTS);
+        } 
+        else if (strcmp(key, "accept_ports") == 0) {
+            parse_ports_list(value, accept_ports, &accept_count, MAX_ACCEPT_PORTS);
+        } 
+        else {
+            fprintf(stderr, "Warning: config line %d unknown key '%s'\n", line_num, key);
+        }
+    }
+
+    fclose(fp);
+    printf("Config loaded from: %s\n", path);
     return 0;
 }
 
@@ -530,7 +663,6 @@ static void handle_request(int client_fd) {
         }
     }
 
-
     snprintf(route, sizeof(route), "%s/api/add", base_url);
     if (strcmp(req.method, "POST") == 0 && strcmp(req.path, route) == 0) {
         char response[MAX_OUTPUT_LEN * 2];
@@ -588,6 +720,10 @@ static void print_usage(const char *prog) {
     printf("  -P, --protect <ports>     Protected ports, comma-separated,\n");
     printf("                            read-only from frontend\n");
     printf("                            (e.g. -P 22,80,443)\n");
+    printf("  -A, --accept <ports>      Default ACCEPT ports, comma-separated\n");
+    printf("                            (e.g. -A 53,123)\n");
+    printf("  -c, --config <path>       Configuration file path\n");
+    printf("                            (e.g. -c /etc/firewall.conf)\n");
     printf("  -b, --base-url <url>      Base URL prefix for reverse proxy\n");
     printf("                            (e.g. -b /firewall)\n");
     printf("  -h, --help                Show this help message\n");
@@ -595,7 +731,8 @@ static void print_usage(const char *prog) {
     printf("  %s                                    # default port 8080\n", prog);
     printf("  %s -p 9090                            # custom port\n", prog);
     printf("  %s -p 9090 -P 22,80,443               # with protected ports\n", prog);
-    printf("  %s -p 8080 -P 22,80 -b /firewall       # with base URL\n", prog);
+    printf("  %s -p 8080 -P 22,80 -b /firewall      # with base URL\n", prog);
+    printf("  %s -c /etc/firewall.conf             # load from config file\n", prog);
 }
 
 int main(int argc, char **argv) {
@@ -606,42 +743,73 @@ int main(int argc, char **argv) {
             print_usage(argv[0]);
             return 0;
         }
-        if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--port") == 0) && i + 1 < argc) {
-            port = atoi(argv[++i]);
-            if (port <= 0 || port > 65535) {
-                port = PORT;
-            }
+        if ((strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) && i + 1 < argc) {
+            strncpy(config_path, argv[++i], MAX_PATH_LEN - 1);
+            config_path[MAX_PATH_LEN - 1] = '\0';
         }
-        else if ((strcmp(argv[i], "-P") == 0 || strcmp(argv[i], "--protect") == 0) && i + 1 < argc) {
-            char *list = argv[++i];
-            char *token = strtok(list, ",");
-            while (token && protected_count < MAX_PROTECTED_PORTS) {
-                while (*token == ' ') {
-                    token++;
+    }
+
+    if (config_path[0] != '\0') {
+        load_config_file(config_path, &port, base_url);
+    }
+    else {
+        for (int i = 1; i < argc; i++) {
+            if ((strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--port") == 0) && i + 1 < argc) {
+                port = atoi(argv[++i]);
+                if (port <= 0 || port > 65535) {
+                    port = PORT;
                 }
-                int len = (int)strlen(token);
-                while (len > 0 && token[len - 1] == ' ') {
-                    token[--len] = '\0';
-                }
-                if (len > 0) {
-                    strncpy(protected_ports[protected_count], token, 7);
-                    protected_ports[protected_count][7] = '\0';
-                    protected_count++;
-                }
-                token = strtok(NULL, ",");
             }
-        }
-        else if ((strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--base-url") == 0) && i + 1 < argc) {
-            strncpy(base_url, argv[++i], MAX_PATH_LEN - 1);
-            base_url[MAX_PATH_LEN - 1] = '\0';
-            int blen = (int)strlen(base_url);
-            while (blen > 0 && base_url[blen - 1] == '/') {
-                base_url[--blen] = '\0';
+            else if ((strcmp(argv[i], "-P") == 0 || strcmp(argv[i], "--protect") == 0) && i + 1 < argc) {
+                char *list = argv[++i];
+                char *token = strtok(list, ",");
+                while (token && protected_count < MAX_PROTECTED_PORTS) {
+                    while (*token == ' ') {
+                        token++;
+                    }
+                    int len = (int)strlen(token);
+                    while (len > 0 && token[len - 1] == ' ') {
+                        token[--len] = '\0';
+                    }
+                    if (len > 0) {
+                        strncpy(protected_ports[protected_count], token, 7);
+                        protected_ports[protected_count][7] = '\0';
+                        protected_count++;
+                    }
+                    token = strtok(NULL, ",");
+                }
             }
-        }
-        else {
-            fprintf(stderr, "Unknown option: %s\nTry '%s --help' for usage.\n", argv[i], argv[0]);
-            return 1;
+            else if ((strcmp(argv[i], "-A") == 0 || strcmp(argv[i], "--accept") == 0) && i + 1 < argc) {
+                char *list = argv[++i];
+                char *token = strtok(list, ",");
+                while (token && accept_count < MAX_ACCEPT_PORTS) {
+                    while (*token == ' ') {
+                        token++;
+                    }
+                    int len = (int)strlen(token);
+                    while (len > 0 && token[len - 1] == ' ') {
+                        token[--len] = '\0';
+                    }
+                    if (len > 0) {
+                        strncpy(accept_ports[accept_count], token, 7);
+                        accept_ports[accept_count][7] = '\0';
+                        accept_count++;
+                    }
+                    token = strtok(NULL, ",");
+                }
+            }
+            else if ((strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--base-url") == 0) && i + 1 < argc) {
+                strncpy(base_url, argv[++i], MAX_PATH_LEN - 1);
+                base_url[MAX_PATH_LEN - 1] = '\0';
+                int blen = (int)strlen(base_url);
+                while (blen > 0 && base_url[blen - 1] == '/') {
+                    base_url[--blen] = '\0';
+                }
+            }
+            else {
+                fprintf(stderr, "Unknown option: %s\nTry '%s --help' for usage.\n", argv[i], argv[0]);
+                return 1;
+            }
         }
     }
 
@@ -687,7 +855,22 @@ int main(int argc, char **argv) {
             printf("%s%s", protected_ports[i], (i < protected_count - 1) ? "," : "\n");
         }
     }
-    printf("Open: http://localhost:%d%s/\n", port, base_url);
+    if (accept_count > 0) {
+        char cmd[MAX_CMD_LEN];
+        char cmd_output[MAX_OUTPUT_LEN];
+        for (int i = 0; i < accept_count; i++) {
+            snprintf(cmd, sizeof(cmd),"ip6tables -I INPUT 1 -p tcp --dport %s -j ACCEPT 2>&1",accept_ports[i]);
+            printf("exec: %s\n", cmd);
+            memset(cmd_output, 0, sizeof(cmd_output));
+            int ret = exec_cmd(cmd, cmd_output, sizeof(cmd_output));
+            if (ret == 0 && cmd_output[0] == '\0') {
+                printf("Accept port %s: OK\n", accept_ports[i]);
+            } else {
+                printf("Accept port %s: FAILED (exit=%d) %s\n",accept_ports[i], ret, cmd_output);
+            }
+        }
+    }
+    printf("Open: http://localhost:%d%s\n", port, base_url);
     printf("Press Ctrl+C to exit.\n");
 
     while (1) {
