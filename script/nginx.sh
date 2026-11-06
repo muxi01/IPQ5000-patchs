@@ -12,6 +12,6 @@
 mkdir -p /var/log/nginx
 cp -rf ${SCRIPT_ROOT}/nginx /tmp/nginx
 rm -rf /tmp/nginx/sbin/nginx
-
+${SCRIPT_ROOT}/nginx/sbin/navigation -c /tmp/nginx/nginx.conf -o /tmp/nginx/html/nav.html
 ${SCRIPT_ROOT}/nginx/sbin/nginx -p /tmp/nginx -c /tmp/nginx/nginx.conf
 
